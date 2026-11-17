@@ -1,36 +1,54 @@
-# 小偷公司去广告（LSPosed）1.1.0
+# 小偷公司去广告（LSPosed）1.2.0
 
-针对《小偷公司》Android 包 `com.WoodenStool.ThiefSimulator`（上传样本版本 0.2.9）的 LSPosed 模块源码。
+针对《小偷公司》Android 包 `com.WoodenStool.ThiefSimulator`，基于用户上传的 0.2.9 DEX 样本定向适配。
 
-## 1. 本次修复内容
+## 1. 1.2.0 更新
 
-首版对 `com.tapsdk.tapad.group.l` 的广告加载和自动展示方法直接 `return null`。这会让 Unity 游戏端已经置为“广告正在准备/播放”的状态，却收不到任何结束回调，因此按钮可能一直认为广告还在处理中。
+本版在激励视频展示入口增加客户端奖励回调：
 
-1.1.0 修复为：
+1. 先尝试调用 `onAdShow()`；
+2. 调用 `onRewardVerify(true, 1, "reward", 0, "")`；
+3. 再调用 `onAdClose()`；
+4. 拦截实际视频展示，不启动广告播放。
 
-- 优先 Hook `com.dirichlet.unity.DirichletUnityBridge` 的广告加载和自动展示入口。
-- 不再静默吞掉回调；向 Unity/Dirichlet listener 发送 `onError("<NO_AD_FILL code>", "<description>")`。
-- 对直接调用 TapTap Dirichlet facade 的情况，补充 `CommonListener.onError(int, String)` 失败回调。
-- `preLoad` 仍直接阻止，避免预加载广告。
-- 保留广告对象层的展示拦截。
-- 不伪造 `onRewardVerify`、`onVideoComplete` 或其他奖励成功回调；激励广告失败时不会发放奖励。
+默认奖励参数在 `Entry.java` 中配置：
 
-错误码优先从 SDK 的 `ErrorCodeEnum.NO_AD_FILL` 动态读取，避免硬编码版本相关数字。
+```java
+private static final int SIMULATED_REWARD_AMOUNT = 1;
+private static final String SIMULATED_REWARD_NAME = "reward";
+```
 
-## 2. 静态分析依据
+如需调整本地回调传递的数值，可修改这两个常量后重新编译。游戏是否采用这些参数发放奖励，取决于游戏自身逻辑。
 
-基于用户上传的 `小偷公司_0.2.9.zip` 中的 DEX：
+## 2. 为什么使用 onRewardVerify，而不是 onVideoComplete
 
-- Unity 桥接类：`com.dirichlet.unity.DirichletUnityBridge`
-- 自动展示入口：`showRewardVideoAutoAd`、`showInterstitialAutoAd`、`showBannerAutoAd`、`showSplashAutoAd`
-- Unity 自动展示回调接口包含 `onError(String, String)`
-- TapTap Dirichlet facade：`com.tapsdk.tapad.group.l`
-- Dirichlet facade 回调继承 `CommonListener.onError(int, String)`
-- SDK 错误枚举包含 `NO_AD_FILL`
+检查上传的 0.2.9 DEX 后，实际 Unity 桥接监听器
+`com.dirichlet.unity.DirichletUnityBridge$RewardVideoAutoAdListener`
+声明了：
 
-这份模块是针对上传的 0.2.9 DEX 的定向 Hook，仍需在设备上验证。样本不含 Unity 原生库及完整资源，不能保证覆盖其他 SDK 或未来版本。
+```text
+onRewardVerify(boolean, int, String, int, String)
+onAdClose()
+onAdShow()
+onError(String, String)
+```
 
-## 3. 编译
+该 Unity 桥接监听器没有 `onVideoComplete()`。`onVideoComplete()` 出现在底层
+`TapRewardVideoAd$RewardAdInteractionListener`，但它不是这个游戏 Unity 桥接入口使用的回调接口。因此本版优先调用实际桥接接口中的 `onRewardVerify()`。
+
+## 3. Hook 行为
+
+- Unity `showRewardVideoAutoAd`：调用奖励验证及关闭回调，然后阻止真实展示。
+- TapTap Dirichlet `showRewardVideoAutoAd`：同样调用奖励验证及关闭回调。
+- `DirichletRewardVideoAd` 对象路径：捕获 `setRewardAdInteractionListener()` 注册的监听器，在 `showRewardVideoAd()` 时调用奖励回调并阻止展示。
+- 激励视频加载入口允许继续执行，以便 SDK 创建广告对象和监听器；因此该路径仍可能产生广告请求/加载流量，但不会播放视频。
+- 开屏、插屏、横幅、信息流等其他广告仍按原策略阻止展示或返回无广告错误。
+
+## 4. 重要限制
+
+这只是客户端本地回调模拟，不代表真实观看，也不会生成广告平台的有效展示记录、签名或服务端验证凭证。若游戏服务端校验广告回调或奖励订单，服务端可能拒绝奖励。使用修改模块可能违反游戏规则，并有账号或存档风险；建议仅用于离线测试或你有权测试的环境。
+
+## 5. 编译
 
 需要 JDK 17、Android SDK 35、Gradle 8.9：
 
@@ -38,35 +56,25 @@
 gradle --no-daemon :app:assembleDebug
 ```
 
-生成文件：
+APK：
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Xposed API 使用 `compileOnly`，不会打进 APK；运行时由 LSPosed 提供。
+Xposed API 使用 `compileOnly`，由 LSPosed 在运行时提供。
 
-## 4. GitHub Actions 自动编译
+## 6. GitHub Actions
 
-工作流位于 `.github/workflows/build.yml`：
+`.github/workflows/build.yml` 支持 push、Pull Request 和手动触发，构建后上传 `ThiefCompany-AdBlock-debug` Artifact。Android SDK 初始化只安装仍受支持的 `platform-tools`，不再请求已移除的旧 `tools` 包。
 
-- push 到 `main` / `master` 时自动构建
-- Pull Request 时自动构建
-- 支持 `workflow_dispatch` 手动触发
-- 构建完成后上传 `ThiefCompany-AdBlock-debug` Artifact
-- Android SDK 初始化只安装仍受支持的 `platform-tools`，避免请求已移除的旧 `tools` 包
+## 7. 安装与验证
 
-## 5. 安装与验证
-
-1. 在 LSPosed 中先停用旧版模块。
-2. 如果新 APK 因签名不一致不能覆盖安装，先卸载旧的“去广告模块 APK”（不要卸载游戏），再安装新 APK。
-3. 在 LSPosed 中启用新版模块，确认作用域为 `com.WoodenStool.ThiefSimulator`。
+1. 在 LSPosed 中停用旧版模块。
+2. 安装新版 APK；若签名不一致，先卸载旧的模块 APK（不要卸载游戏）。
+3. 在 LSPosed 中启用模块，并确认作用域为 `com.WoodenStool.ThiefSimulator`。
 4. 强制停止游戏后重新启动。
-5. 查看 LSPosed 日志，搜索 `ThiefNoAds`。新版应出现 `sent Unity onError` 或 `sent Dirichlet onError` 日志。
-6. 测试广告按钮：预期是不再播放广告，游戏收到“无广告填充/广告不可用”错误回调，等待状态应结束。
+5. 查看 LSPosed 日志，搜索 `[ThiefNoAds]`，应看到 `sent onRewardVerify`，并尽可能看到 `sent onAdClose`。
+6. 测试激励视频按钮，确认广告没有实际播放、游戏界面能否结束等待状态，以及游戏是否实际发放奖励。
 
-## 6. 激励广告说明
-
-本模块只报告广告不可用，不伪造观看完成或奖励验证。因此激励广告按钮不会凭空发放奖励。如果游戏设计为必须看广告才能获得奖励，该奖励仍不会获得；若游戏对 `onError` 没有正确处理，相关界面仍可能需要进一步针对游戏逻辑排查。
-
-若游戏闪退或功能异常，在 LSPosed 中关闭模块并强制停止游戏即可回退；本模块不修改原游戏 APK。
+如果闪退或状态异常，在 LSPosed 中停用模块并强制停止游戏即可回退。本模块不修改原游戏 APK。
