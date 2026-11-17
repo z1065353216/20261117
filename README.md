@@ -59,7 +59,7 @@ Xposed API 使用 `compileOnly`，不会被打进 APK；运行时由 LSPosed 提
 
 ## GitHub Actions 自动编译
 
-工作流位于 `.github/workflows/build.yml`：
+工作流位于 `.github/workflows/build.yml`。Android SDK 初始化显式只安装 `platform-tools`，避免请求 Google 已移除的旧 `tools` 包：
 
 - push 到 `main` / `master` 时自动构建
 - Pull Request 时自动构建
