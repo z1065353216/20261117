@@ -10,7 +10,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="拦截小偷公司 0.2.9 的 TapTap 广告加载与展示" />
+            android:value="拦截小偷公司 0.2.9 广告，并向 Unity 回调广告不可用状态" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
